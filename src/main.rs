@@ -3,7 +3,7 @@
 //! Initializes tracing (to stderr, so it doesn't interfere with MCP stdio transport),
 //! creates the server, and serves on stdin/stdout.
 
-use agentsh::server::LlmNotifyServer;
+use agentsh::server::AgentshServer;
 use anyhow::Result;
 use rmcp::{ServiceExt, transport::stdio};
 use tracing_subscriber::{self, EnvFilter};
@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting agentsh MCP server v{}", env!("CARGO_PKG_VERSION"));
 
-    let server = LlmNotifyServer::new();
+    let server = AgentshServer::new();
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;

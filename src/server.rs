@@ -1,6 +1,6 @@
 //! MCP server: tool definitions using rmcp macros.
 //!
-//! Defines `LlmNotifyServer` with MCP tools for:
+//! Defines `AgentshServer` with MCP tools for:
 //! - Stateless commands: `run_command`, `start_command`, `wait_command`, `get_status`,
 //!   `kill_command`, `list_commands`, `get_output`
 //! - Persistent sessions: `create_session`, `session_exec`, `list_sessions`, `close_session`
@@ -181,13 +181,13 @@ struct KillResult {
 /// Holds a [`ProcessRegistry`] for stateless commands and a [`SessionManager`]
 /// for persistent shell sessions.
 #[derive(Clone)]
-pub struct LlmNotifyServer {
+pub struct AgentshServer {
     registry: ProcessRegistry,
     sessions: SessionManager,
-    tool_router: ToolRouter<LlmNotifyServer>,
+    tool_router: ToolRouter<AgentshServer>,
 }
 
-impl LlmNotifyServer {
+impl AgentshServer {
     /// Create a new server instance.
     #[must_use]
     pub fn new() -> Self {
@@ -199,7 +199,7 @@ impl LlmNotifyServer {
     }
 }
 
-impl Default for LlmNotifyServer {
+impl Default for AgentshServer {
     fn default() -> Self {
         Self::new()
     }
@@ -235,7 +235,7 @@ fn build_command_result(
 }
 
 #[tool_router]
-impl LlmNotifyServer {
+impl AgentshServer {
     #[tool(
         description = "Execute a command in a fresh shell (no state between calls, no PTY). Best for quick one-off commands like `git status`, `ls`, `which`. Blocks until done. Returns structured output with exit_code, duration, windowed output (head/tail/error_lines). The returned `id` can be used with get_output to retrieve full output if truncated. For commands needing persistent state (cd, export) or a terminal (claude CLI, interactive tools), use create_session + session_exec instead."
     )]
@@ -469,7 +469,7 @@ impl LlmNotifyServer {
 }
 
 #[tool_handler]
-impl ServerHandler for LlmNotifyServer {
+impl ServerHandler for AgentshServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2024_11_05,

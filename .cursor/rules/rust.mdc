@@ -31,7 +31,7 @@ globs:
 
 ## Naming
 
-- Structs: PascalCase (`ProcessResult`, `OutputWindow`, `LlmNotifyServer`).
+- Structs: PascalCase (`ProcessResult`, `OutputWindow`, `AgentshServer`).
 - Functions/methods: snake_case (`run_command`, `extract_errors`).
 - Constants: SCREAMING_SNAKE_CASE.
 - Module files: snake_case matching the module name.

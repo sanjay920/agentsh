@@ -39,7 +39,7 @@ src/
 - **session.rs**: PTY-backed persistent bash sessions. Uses `pty-process` crate for real
   pseudo-terminals (`isatty()=true`). Commands delimited with UUID markers. State (cwd,
   env vars, functions, aliases) persists across commands. ANSI codes stripped from output.
-- **server.rs**: MCP glue. Defines `LlmNotifyServer` struct with 11 tools:
+- **server.rs**: MCP glue. Defines `AgentshServer` struct with 11 tools:
   Stateless: `run_command`, `start_command`, `wait_command`, `get_status`, `kill_command`,
   `list_commands`, `get_output`.
   Sessions: `create_session`, `session_exec`, `list_sessions`, `close_session`.
@@ -57,7 +57,7 @@ All tool methods:
 ## Adding a New Tool
 
 1. Define a params struct in `server.rs` with `#[derive(Deserialize, JsonSchema)]`.
-2. Add a method inside the `#[tool_router] impl LlmNotifyServer` block with
+2. Add a method inside the `#[tool_router] impl AgentshServer` block with
    `#[tool(description = "...")]`.
 3. Write a clear description that tells agents when to use this tool vs alternatives.
 4. Implement the logic (delegating to process.rs, registry.rs, or session.rs).
@@ -67,7 +67,7 @@ All tool methods:
 
 - **Unit tests** (output, process): Direct function calls. Use `#[tokio::test]`.
 - **MCP integration tests** (server): Use `tokio::io::duplex(65536)` to create in-process
-  transport. Create `LlmNotifyServer` + `TestClient`, connect via duplex, call tools
+  transport. Create `AgentshServer` + `TestClient`, connect via duplex, call tools
   through the MCP protocol.
 - **Session tests**: Direct `SessionManager` calls. Test state persistence (cwd, env,
   functions, aliases), PTY behavior (isatty), timeout recovery, and security.

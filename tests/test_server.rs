@@ -3,7 +3,7 @@
 //! Uses `tokio::io::duplex` to create an in-process transport, connects a test
 //! client to the agentsh server, and exercises all tools through the MCP protocol.
 
-use agentsh::server::LlmNotifyServer;
+use agentsh::server::AgentshServer;
 use rmcp::model::*;
 use rmcp::{ClientHandler, ServiceExt};
 use serde_json::Value;
@@ -21,7 +21,7 @@ async fn setup() -> rmcp::service::RunningService<
 > {
     let (server_transport, client_transport) = tokio::io::duplex(65536);
 
-    let server = LlmNotifyServer::new();
+    let server = AgentshServer::new();
     tokio::spawn(async move {
         let service = server.serve(server_transport).await.unwrap();
         let _ = service.waiting().await;
