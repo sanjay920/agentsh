@@ -407,8 +407,31 @@ impl SessionManager {
             .remove(id)
             .ok_or_else(|| format!("no session with id '{id}'"))?;
 
+        // Ask bash to exit gracefully.
         let _ = session.raw_send("exit\n").await;
-        let _ = session.child.kill().await;
+
+        // Destructure to drop PTY handles before waiting -- closing the master
+        // fd sends SIGHUP to bash, which unblocks the wait below. Without this,
+        // child.wait() can hang indefinitely because the PTY keeps the process
+        // alive.
+        let ShellSession {
+            mut child,
+            writer,
+            reader,
+        } = session;
+        drop(writer);
+        drop(reader);
+
+        // Wait for graceful exit with a bounded timeout.
+        if tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+            .await
+            .is_err()
+        {
+            let _ = child.start_kill();
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(1), child.wait()).await;
+        }
+
         Ok(())
     }
 }
