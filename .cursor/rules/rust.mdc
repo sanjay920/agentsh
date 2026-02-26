@@ -1,0 +1,57 @@
+---
+description: Rust coding standards and conventions for agentsh
+globs:
+  - "**/*.rs"
+---
+
+# Rust Coding Standards
+
+## Error Handling
+
+- Use `anyhow::Result` in `main.rs` and test code for convenience.
+- Use `thiserror` or manual `impl` for library error types if needed.
+- In MCP tool methods, return `Result<CallToolResult, McpError>` as required by rmcp.
+- Convert internal errors to `McpError::internal_error(msg, None)` at the tool boundary.
+
+## Code Style
+
+- Run `cargo fmt` before committing. All code must be formatted.
+- Run `cargo clippy` and fix all warnings. No `#[allow(clippy::...)]` without justification.
+- Use `#[must_use]` on public functions that return values the caller should not ignore.
+- Write doc comments (`///`) on all public types, functions, and methods.
+- Prefer `&str` over `String` in function parameters when ownership is not needed.
+- Use `impl Into<String>` or generics sparingly; prefer concrete types for clarity.
+
+## Async Conventions
+
+- All process-related code is async (tokio).
+- Use `tokio::sync::Mutex` for state shared across `.await` points.
+- Use `std::sync::Mutex` only for synchronous-only critical sections.
+- Prefer `tokio::select!` for racing between timeout and completion.
+
+## Naming
+
+- Structs: PascalCase (`ProcessResult`, `OutputWindow`, `LlmNotifyServer`).
+- Functions/methods: snake_case (`run_command`, `extract_errors`).
+- Constants: SCREAMING_SNAKE_CASE.
+- Module files: snake_case matching the module name.
+
+## Testing
+
+- All tests use `#[tokio::test]` since the project is async.
+- Test files live in `tests/` directory (integration tests).
+- Each test file focuses on one module: `test_output.rs`, `test_process.rs`, `test_server.rs`.
+- Use descriptive test names: `test_run_echo_returns_zero_exit_code`.
+- Assert specific values, not just `is_ok()`.
+
+## Dependencies
+
+- Pin major versions in Cargo.toml (e.g., `tokio = "1"`, `serde = "1.0"`).
+- Minimize feature flags: only enable what is used.
+- Prefer well-maintained crates from the Rust ecosystem.
+
+## Safety
+
+- No `unsafe` code unless absolutely necessary and documented.
+- All child processes use `kill_on_drop(true)` to prevent orphans.
+- Process groups are used for signal delivery to ensure child trees are cleaned up.

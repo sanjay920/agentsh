@@ -1,0 +1,25 @@
+# Rust
+/target/
+# Note: Cargo.lock is committed (binary project, not library)
+
+# Python (examples)
+.venv/
+__pycache__/
+*.pyc
+uv.lock
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

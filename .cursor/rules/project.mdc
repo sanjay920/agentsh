@@ -1,0 +1,84 @@
+---
+description: Project architecture, module responsibilities, and conventions for agentsh
+globs:
+  - "**/*.rs"
+  - "Cargo.toml"
+---
+
+# agentsh Project Rules
+
+## What This Project Is
+
+agentsh is an MCP (Model Context Protocol) server that provides shell command
+execution for LLM agents. It has two modes: stateless commands (run_command) and
+persistent PTY-backed sessions (create_session + session_exec).
+
+## Architecture
+
+```
+src/
+  main.rs      - Entry point. Inits tracing, creates server, serves on stdio.
+  lib.rs       - Library root. Re-exports all modules.
+  server.rs    - MCP tool definitions using rmcp #[tool_router] / #[tool_handler] macros.
+  process.rs   - Stateless process spawning, output capture, timeout, security validation.
+  registry.rs  - HashMap-based registry of running/completed processes by ID.
+  output.rs    - Output windowing (head/tail), error pattern extraction, ANSI stripping.
+  session.rs   - PTY-backed persistent shell sessions with state preservation.
+```
+
+## Module Responsibilities
+
+- **output.rs**: Pure functions. No async, no I/O. Takes `Vec<String>` lines, returns
+  `OutputWindow` with head/tail/errors. Also provides `strip_ansi()` for cleaning PTY output.
+- **process.rs**: Async process management for stateless commands. Spawns via `/bin/sh -c`
+  with pipes (no PTY). Includes dangerous command validation, timeout clamping, and
+  env sanitization (opt-in stripping via `AGENTSH_STRIP_ENV`).
+- **registry.rs**: Thread-safe storage of `ProcessEntry` values keyed by string ID.
+  Entries persist after completion for result retrieval via `get_output`. TTL cleanup
+  after 30 minutes. Enforces max concurrent process limit.
+- **session.rs**: PTY-backed persistent bash sessions. Uses `pty-process` crate for real
+  pseudo-terminals (`isatty()=true`). Commands delimited with UUID markers. State (cwd,
+  env vars, functions, aliases) persists across commands. ANSI codes stripped from output.
+- **server.rs**: MCP glue. Defines `LlmNotifyServer` struct with 11 tools:
+  Stateless: `run_command`, `start_command`, `wait_command`, `get_status`, `kill_command`,
+  `list_commands`, `get_output`.
+  Sessions: `create_session`, `session_exec`, `list_sessions`, `close_session`.
+- **main.rs**: Minimal. Only tracing setup + `server.serve(stdio())`.
+
+## MCP Tool Conventions
+
+All tool methods:
+1. Accept params via `Parameters<T>` where T derives `Deserialize` + `JsonSchema`.
+2. Return `Result<CallToolResult, McpError>`.
+3. Serialize results as JSON strings inside `Content::text(...)`.
+4. Use `CallToolResult::success(...)` for success, error content for failures.
+5. Log commands at INFO level for audit trail.
+
+## Adding a New Tool
+
+1. Define a params struct in `server.rs` with `#[derive(Deserialize, JsonSchema)]`.
+2. Add a method inside the `#[tool_router] impl LlmNotifyServer` block with
+   `#[tool(description = "...")]`.
+3. Write a clear description that tells agents when to use this tool vs alternatives.
+4. Implement the logic (delegating to process.rs, registry.rs, or session.rs).
+5. Add integration tests in `tests/test_server.rs`.
+
+## Test Patterns
+
+- **Unit tests** (output, process): Direct function calls. Use `#[tokio::test]`.
+- **MCP integration tests** (server): Use `tokio::io::duplex(65536)` to create in-process
+  transport. Create `LlmNotifyServer` + `TestClient`, connect via duplex, call tools
+  through the MCP protocol.
+- **Session tests**: Direct `SessionManager` calls. Test state persistence (cwd, env,
+  functions, aliases), PTY behavior (isatty), timeout recovery, and security.
+- All tests go in the `tests/` directory (integration test crate), not inline.
+- Test names follow `test_<behavior>` pattern.
+
+## Key Dependencies
+
+- `rmcp` 0.15 - Rust MCP SDK with tool macros
+- `tokio` - Async runtime, process spawning
+- `pty-process` 0.5 - PTY allocation for sessions (AsyncRead/AsyncWrite)
+- `nix` - Unix signal handling (kill process groups)
+- `schemars` 1.0 - JSON schema for tool params
+- `regex` - Error pattern matching, ANSI stripping
