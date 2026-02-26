@@ -68,6 +68,20 @@ If you built from source instead of installing via brew/PATH:
 }
 ```
 
+### Claude Code (CLI)
+
+```bash
+claude mcp add --transport stdio agentsh -- agentsh
+```
+
+If you built from source instead of installing via brew/PATH:
+
+```bash
+claude mcp add --transport stdio agentsh -- /path/to/agentsh/target/release/agentsh
+```
+
+Verify with `/mcp` inside Claude Code.
+
 ### Claude Desktop (`claude_desktop_config.json`)
 
 ```json

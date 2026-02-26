@@ -20,6 +20,9 @@ uv.lock
 .DS_Store
 Thumbs.db
 
+# Internal docs
+RELEASING.md
+
 # Environment
 .env
 .env.local
