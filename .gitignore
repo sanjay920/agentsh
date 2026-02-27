@@ -23,6 +23,9 @@ Thumbs.db
 # Internal docs
 RELEASING.md
 
+# Local MCP config (contains machine-specific paths)
+.mcp.json
+
 # Environment
 .env
 .env.local
