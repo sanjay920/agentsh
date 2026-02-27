@@ -254,21 +254,16 @@ impl ShellSession {
                     return Err(format!("error reading PTY output: {e}"));
                 }
                 Err(_) => {
-                    // Timeout -- send SIGINT to interrupt the foreground command.
-                    if let Some(pid) = self.child.id() {
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(pid as i32),
-                            nix::sys::signal::Signal::SIGINT,
-                        );
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                        let _ = nix::sys::signal::kill(
-                            nix::unistd::Pid::from_raw(-(pid as i32)),
-                            nix::sys::signal::Signal::SIGTERM,
-                        );
-                    }
+                    // Timeout -- send Ctrl+C via the PTY to interrupt the
+                    // foreground command. This is more surgical than kill():
+                    // only the foreground process receives SIGINT, bash stays
+                    // alive so the session remains usable after timeout.
+                    let _ = self.raw_send("\x03").await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    let _ = self.raw_send("\x03").await; // double Ctrl+C for stubborn processes
                     timed_out = true;
 
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
                     // Recovery marker to re-sync.
                     let recovery_id = uuid::Uuid::new_v4().to_string();
