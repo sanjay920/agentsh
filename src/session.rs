@@ -230,21 +230,26 @@ impl ShellSession {
                     }
 
                     if !found_start {
-                        if cleaned == start_marker {
+                        if cleaned.contains(&start_marker) {
                             found_start = true;
                         }
                         continue;
                     }
 
-                    // Check for end marker.
-                    if cleaned.starts_with(&end_marker_prefix) && cleaned.ends_with("__") {
-                        let code_str = &cleaned[end_marker_prefix.len()..cleaned.len() - 2];
-                        exit_code = code_str.parse::<i32>().unwrap_or(-1);
-                        break;
+                    // Check for end marker. Use `find` instead of `starts_with`
+                    // because programs (e.g. claude CLI) can leave stray ANSI
+                    // escape sequences that the stripper doesn't fully remove.
+                    if let Some(pos) = cleaned.find(&end_marker_prefix) {
+                        let after = &cleaned[pos + end_marker_prefix.len()..];
+                        if after.ends_with("__") {
+                            let code_str = &after[..after.len() - 2];
+                            exit_code = code_str.parse::<i32>().unwrap_or(-1);
+                            break;
+                        }
                     }
 
                     // Skip lines that look like our internal markers/commands.
-                    if cleaned.starts_with(MARKER_PREFIX) {
+                    if cleaned.contains(MARKER_PREFIX) {
                         continue;
                     }
 
@@ -285,14 +290,14 @@ impl ShellSession {
                         {
                             Ok(Ok(n)) if n > 0 => {
                                 let cleaned = clean_line(&line);
-                                if cleaned == recovery_marker {
+                                if cleaned.contains(&recovery_marker) {
                                     break;
                                 }
-                                if cleaned.starts_with(&end_marker_prefix) {
+                                if cleaned.contains(&end_marker_prefix) {
                                     break;
                                 }
                                 if lines.len() < MAX_OUTPUT_LINES
-                                    && !cleaned.starts_with(MARKER_PREFIX)
+                                    && !cleaned.contains(MARKER_PREFIX)
                                     && !cleaned.is_empty()
                                 {
                                     lines.push(cleaned);
