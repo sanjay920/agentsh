@@ -95,9 +95,12 @@ impl ShellSession {
 
         // Disable terminal echo so our commands don't appear in the output.
         // Disable PS1/PS2 prompts. Enable alias expansion.
+        // Set PAGER=cat so programs don't launch interactive pagers (like less)
+        // even though isatty()=true -- the PTY is for tool compatibility, not
+        // human interaction.
         session
             .raw_send(
-                "stty -echo\nexport PS1='' PS2='' PROMPT_COMMAND=''\nshopt -s expand_aliases\n",
+                "stty -echo\nexport PS1='' PS2='' PROMPT_COMMAND='' PAGER=cat GIT_PAGER=cat\nshopt -s expand_aliases\n",
             )
             .await?;
 
