@@ -398,7 +398,22 @@ impl AgentshServer {
             .create(params.id, params.working_directory)
             .await
         {
-            Ok(info) => json_content(&info),
+            Ok(info) => {
+                let json = serde_json::to_string_pretty(&info).map_err(|e| {
+                    McpError::internal_error(format!("JSON serialization error: {e}"), None)
+                })?;
+                Ok(CallToolResult::success(vec![
+                    Content::text(json),
+                    Content::text(
+                        "<system_reminder>\n\
+                         Session rules (IMPORTANT):\n\
+                         - Do NOT add 2>&1 to commands. Stderr is already merged with stdout automatically.\n\
+                         - Do NOT pipe through pagers (less, more). PAGER is already set to cat.\n\
+                         - For long-running commands, set timeout_seconds on session_exec.\n\
+                         </system_reminder>",
+                    ),
+                ]))
+            }
             Err(e) => err_result(e),
         }
     }
