@@ -120,6 +120,10 @@ impl ShellSession {
     }
 
     /// Drain initial output after session creation.
+    ///
+    /// Uses a total timeout (not per-line) because `read_line` on a PTY can
+    /// block indefinitely when bash emits a prompt without a trailing newline
+    /// -- the per-read timeout never fires since bytes ARE arriving.
     async fn drain_initial_output(&mut self) {
         let drain_id = uuid::Uuid::new_v4().to_string();
         let drain_cmd = format!("echo '{MARKER_PREFIX}DRAIN_{drain_id}__'\n");
@@ -128,23 +132,31 @@ impl ShellSession {
         }
 
         let target = format!("{MARKER_PREFIX}DRAIN_{drain_id}__");
+
+        // Wrap the entire drain in a total timeout so we never hang.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            Self::read_until_marker(&mut self.reader, &target),
+        )
+        .await;
+    }
+
+    /// Read lines from the PTY until the marker is found or EOF.
+    async fn read_until_marker(
+        reader: &mut BufReader<pty_process::OwnedReadPty>,
+        target: &str,
+    ) {
         let mut line = String::new();
         loop {
             line.clear();
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                self.reader.read_line(&mut line),
-            )
-            .await
-            {
-                Ok(Ok(0)) => break,
-                Ok(Ok(_)) => {
-                    let cleaned = clean_line(&line);
-                    if cleaned == target {
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    if clean_line(&line) == target {
                         break;
                     }
                 }
-                _ => break,
+                Err(_) => break,
             }
         }
     }
