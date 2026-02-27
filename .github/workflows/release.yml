@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package tarball
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../agentsh-${{ matrix.target }}.tar.gz agentsh
+          cd ../../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentsh-${{ matrix.target }}
+          path: agentsh-${{ matrix.target }}.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agentsh-*.tar.gz
+          generate_release_notes: true
+
+  update-tap:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Compute checksums and update formula
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+
+          SHA_AARCH64_DARWIN=$(shasum -a 256 agentsh-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)
+          SHA_X86_64_DARWIN=$(shasum -a 256 agentsh-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)
+          SHA_X86_64_LINUX=$(shasum -a 256 agentsh-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+          SHA_AARCH64_LINUX=$(shasum -a 256 agentsh-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)
+
+          cat > agentsh.rb << FORMULA
+          class Agentsh < Formula
+            desc "A shell for AI agents - runs commands, blocks efficiently, returns structured output"
+            homepage "https://github.com/sanjay920/agentsh"
+            license "MIT"
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/sanjay920/agentsh/releases/download/${TAG}/agentsh-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA_AARCH64_DARWIN}"
+              else
+                url "https://github.com/sanjay920/agentsh/releases/download/${TAG}/agentsh-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA_X86_64_DARWIN}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/sanjay920/agentsh/releases/download/${TAG}/agentsh-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_AARCH64_LINUX}"
+              else
+                url "https://github.com/sanjay920/agentsh/releases/download/${TAG}/agentsh-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${SHA_X86_64_LINUX}"
+              end
+            end
+
+            def install
+              bin.install "agentsh"
+            end
+
+            test do
+              assert_predicate bin/"agentsh", :executable?
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' agentsh.rb
+
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/sanjay920/homebrew-tap.git tap
+          cp agentsh.rb tap/Formula/agentsh.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/agentsh.rb
+          git commit -m "Update agentsh to ${VERSION}"
+          git push
