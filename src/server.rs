@@ -128,6 +128,12 @@ pub struct SessionExecParams {
     /// Maximum number of output lines to return. Defaults to 200.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_lines: Option<usize>,
+    /// If set, return early when no new output arrives for this many seconds
+    /// after the first output line. Useful for commands that produce output
+    /// but don't exit cleanly (e.g. `claude -p`). The command is interrupted
+    /// via Ctrl+C and the session remains usable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_seconds: Option<u64>,
 }
 
 /// Parameters for the `close_session` tool.
@@ -419,7 +425,7 @@ impl AgentshServer {
     }
 
     #[tool(
-        description = "Execute a command in a persistent session. Working directory, env vars, functions, and aliases from previous commands persist. Has a real PTY so interactive tools and CLIs that require a terminal work. Returns structured output with exit_code, duration, and windowed output lines. For long-running commands (builds, tests, AI tools), increase timeout_seconds (default 300s, max 3600s). If a command might take more than 5 minutes, set timeout_seconds accordingly."
+        description = "Execute a command in a persistent session. Working directory, env vars, functions, and aliases from previous commands persist. Has a real PTY so interactive tools and CLIs that require a terminal work. Returns structured output with exit_code, duration, and windowed output lines. For long-running commands (builds, tests, AI tools), increase timeout_seconds (default 300s, max 3600s). If a command might take more than 5 minutes, set timeout_seconds accordingly. For commands that produce output but may not exit cleanly (e.g. `claude -p`), set idle_timeout_seconds to return early once output stops flowing."
     )]
     async fn session_exec(
         &self,
@@ -431,7 +437,12 @@ impl AgentshServer {
 
         match self
             .sessions
-            .exec(&params.id, &params.command, params.timeout_seconds)
+            .exec(
+                &params.id,
+                &params.command,
+                params.timeout_seconds,
+                params.idle_timeout_seconds,
+            )
             .await
         {
             Ok(result) => {

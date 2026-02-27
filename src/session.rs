@@ -169,6 +169,7 @@ impl ShellSession {
         &mut self,
         command: &str,
         timeout_seconds: Option<u64>,
+        idle_timeout_seconds: Option<u64>,
     ) -> Result<SessionExecResult, String> {
         // Validate dangerous commands.
         if let Err(reason) = process::validate_command(command) {
@@ -207,12 +208,22 @@ impl ShellSession {
         let mut exit_code: i32 = -1;
         let mut found_start = false;
         let mut timed_out = false;
+        let mut has_output = false;
         let mut line = String::new();
 
         loop {
+            // After receiving output, use idle timeout if set. This lets us
+            // return early for commands that produce output but don't exit
+            // (e.g. `claude -p`).
+            let read_timeout = if has_output && idle_timeout_seconds.is_some() {
+                idle_timeout_seconds.unwrap()
+            } else {
+                timeout
+            };
+
             line.clear();
             let read_result = tokio::time::timeout(
-                std::time::Duration::from_secs(timeout),
+                std::time::Duration::from_secs(read_timeout),
                 self.reader.read_line(&mut line),
             )
             .await;
@@ -254,6 +265,7 @@ impl ShellSession {
                     }
 
                     // Regular output line.
+                    has_output = true;
                     if lines.len() < MAX_OUTPUT_LINES {
                         lines.push(cleaned);
                     }
@@ -388,6 +400,7 @@ impl SessionManager {
         id: &str,
         command: &str,
         timeout_seconds: Option<u64>,
+        idle_timeout_seconds: Option<u64>,
     ) -> Result<SessionExecResult, String> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions
@@ -398,7 +411,7 @@ impl SessionManager {
             return Err(format!("session '{id}' is dead (bash process exited)"));
         }
 
-        let mut result = session.exec(command, timeout_seconds).await?;
+        let mut result = session.exec(command, timeout_seconds, idle_timeout_seconds).await?;
         result.session_id = id.to_string();
         Ok(result)
     }

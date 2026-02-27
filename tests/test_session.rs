@@ -45,7 +45,7 @@ async fn test_session_exec_echo() {
     let mgr = manager();
     mgr.create("t1".into(), None).await.unwrap();
 
-    let result = mgr.exec("t1", "echo hello session", None).await.unwrap();
+    let result = mgr.exec("t1", "echo hello session", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.lines.iter().any(|l| l.contains("hello session")));
     assert!(!result.timed_out);
@@ -58,7 +58,7 @@ async fn test_session_exec_failure() {
 
     // Use `false` which returns exit code 1 without killing the session.
     // (`exit 42` would kill the bash process since commands run in the current shell.)
-    let result = mgr.exec("t2", "false", None).await.unwrap();
+    let result = mgr.exec("t2", "false", None, None).await.unwrap();
     assert_eq!(result.exit_code, 1);
 }
 
@@ -68,11 +68,11 @@ async fn test_session_exec_custom_exit_code() {
     mgr.create("t2b".into(), None).await.unwrap();
 
     // Use a subshell to get a specific exit code without killing the session.
-    let result = mgr.exec("t2b", "(exit 42)", None).await.unwrap();
+    let result = mgr.exec("t2b", "(exit 42)", None, None).await.unwrap();
     assert_eq!(result.exit_code, 42);
 
     // Session should still be alive.
-    let result = mgr.exec("t2b", "echo alive", None).await.unwrap();
+    let result = mgr.exec("t2b", "echo alive", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.lines.iter().any(|l| l.contains("alive")));
 }
@@ -82,7 +82,7 @@ async fn test_session_exec_no_output() {
     let mgr = manager();
     mgr.create("t3".into(), None).await.unwrap();
 
-    let result = mgr.exec("t3", "true", None).await.unwrap();
+    let result = mgr.exec("t3", "true", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.lines.is_empty());
 }
@@ -92,7 +92,7 @@ async fn test_session_exec_multiline_output() {
     let mgr = manager();
     mgr.create("t4".into(), None).await.unwrap();
 
-    let result = mgr.exec("t4", "seq 1 10", None).await.unwrap();
+    let result = mgr.exec("t4", "seq 1 10", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.lines.len(), 10);
     assert_eq!(result.lines[0], "1");
@@ -104,7 +104,7 @@ async fn test_session_exec_stderr_captured() {
     let mgr = manager();
     mgr.create("t5".into(), None).await.unwrap();
 
-    let result = mgr.exec("t5", "echo err_msg >&2", None).await.unwrap();
+    let result = mgr.exec("t5", "echo err_msg >&2", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result.lines.iter().any(|l| l.contains("err_msg")),
@@ -123,11 +123,11 @@ async fn test_session_cwd_persists() {
     mgr.create("cwd".into(), None).await.unwrap();
 
     // cd somewhere
-    let result = mgr.exec("cwd", "cd /tmp", None).await.unwrap();
+    let result = mgr.exec("cwd", "cd /tmp", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
 
     // pwd should reflect the cd
-    let result = mgr.exec("cwd", "pwd", None).await.unwrap();
+    let result = mgr.exec("cwd", "pwd", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result
@@ -145,12 +145,12 @@ async fn test_session_env_var_persists() {
     mgr.create("env".into(), None).await.unwrap();
 
     // Set an env var
-    mgr.exec("env", "export MY_SESSION_VAR=persistent_value", None)
+    mgr.exec("env", "export MY_SESSION_VAR=persistent_value", None, None)
         .await
         .unwrap();
 
     // Read it back in a subsequent command
-    let result = mgr.exec("env", "echo $MY_SESSION_VAR", None).await.unwrap();
+    let result = mgr.exec("env", "echo $MY_SESSION_VAR", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result.lines.iter().any(|l| l.contains("persistent_value")),
@@ -165,12 +165,12 @@ async fn test_session_shell_function_persists() {
     mgr.create("func".into(), None).await.unwrap();
 
     // Define a function
-    mgr.exec("func", "greet() { echo \"hello $1\"; }", None)
+    mgr.exec("func", "greet() { echo \"hello $1\"; }", None, None)
         .await
         .unwrap();
 
     // Call it later
-    let result = mgr.exec("func", "greet world", None).await.unwrap();
+    let result = mgr.exec("func", "greet world", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result.lines.iter().any(|l| l.contains("hello world")),
@@ -184,10 +184,10 @@ async fn test_session_alias_persists() {
     let mgr = manager();
     mgr.create("alias".into(), None).await.unwrap();
 
-    mgr.exec("alias", "alias ll='ls -la'", None).await.unwrap();
+    mgr.exec("alias", "alias ll='ls -la'", None, None).await.unwrap();
 
     // Using the alias
-    let result = mgr.exec("alias", "ll /tmp", None).await.unwrap();
+    let result = mgr.exec("alias", "ll /tmp", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     // Should produce ls -la output (drwx... lines)
     assert!(!result.lines.is_empty(), "alias should work, got no output");
@@ -202,7 +202,7 @@ async fn test_session_initial_working_directory() {
     let mgr = manager();
     mgr.create("wd".into(), Some("/tmp".into())).await.unwrap();
 
-    let result = mgr.exec("wd", "pwd", None).await.unwrap();
+    let result = mgr.exec("wd", "pwd", None, None).await.unwrap();
     assert!(
         result
             .lines
@@ -224,7 +224,7 @@ async fn test_session_many_sequential_commands() {
 
     for i in 0..20 {
         let result = mgr
-            .exec("seq", &format!("echo command_{i}"), None)
+            .exec("seq", &format!("echo command_{i}"), None, None)
             .await
             .unwrap();
         assert_eq!(result.exit_code, 0);
@@ -251,7 +251,7 @@ async fn test_session_timeout() {
     // Note: timeout kills the foreground process. The session may or may not
     // survive depending on how bash handles the signal. We verify the timeout
     // is detected and the result is correct.
-    let result = mgr.exec("timeout", "sleep 30", Some(2)).await.unwrap();
+    let result = mgr.exec("timeout", "sleep 30", Some(2), None).await.unwrap();
     assert!(result.timed_out, "command should have timed out");
     assert_eq!(result.exit_code, 124, "exit code should be 124 for timeout");
     assert!(
@@ -270,12 +270,12 @@ async fn test_session_blocks_dangerous_commands() {
     let mgr = manager();
     mgr.create("sec".into(), None).await.unwrap();
 
-    let result = mgr.exec("sec", "rm -rf /", None).await.unwrap();
+    let result = mgr.exec("sec", "rm -rf /", None, None).await.unwrap();
     assert_eq!(result.exit_code, -1);
     assert!(result.lines[0].contains("blocked"));
 
     // Session should still work after a blocked command
-    let result = mgr.exec("sec", "echo safe", None).await.unwrap();
+    let result = mgr.exec("sec", "echo safe", None, None).await.unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.lines.iter().any(|l| l.contains("safe")));
 }
@@ -291,12 +291,12 @@ async fn test_multiple_independent_sessions() {
     mgr.create("b".into(), None).await.unwrap();
 
     // Set different state in each
-    mgr.exec("a", "export WHICH=session_a", None).await.unwrap();
-    mgr.exec("b", "export WHICH=session_b", None).await.unwrap();
+    mgr.exec("a", "export WHICH=session_a", None, None).await.unwrap();
+    mgr.exec("b", "export WHICH=session_b", None, None).await.unwrap();
 
     // Verify they're independent
-    let ra = mgr.exec("a", "echo $WHICH", None).await.unwrap();
-    let rb = mgr.exec("b", "echo $WHICH", None).await.unwrap();
+    let ra = mgr.exec("a", "echo $WHICH", None, None).await.unwrap();
+    let rb = mgr.exec("b", "echo $WHICH", None, None).await.unwrap();
 
     assert!(ra.lines.iter().any(|l| l.contains("session_a")));
     assert!(rb.lines.iter().any(|l| l.contains("session_b")));
@@ -326,7 +326,7 @@ async fn test_list_sessions() {
 #[tokio::test]
 async fn test_exec_nonexistent_session() {
     let mgr = manager();
-    let err = mgr.exec("nope", "echo hi", None).await;
+    let err = mgr.exec("nope", "echo hi", None, None).await;
     assert!(err.is_err());
     assert!(err.unwrap_err().contains("no session"));
 }
@@ -344,6 +344,7 @@ async fn test_session_pty_isatty() {
         .exec(
             "tty",
             "python3 -c \"import os; print(os.isatty(0), os.isatty(1), os.isatty(2))\"",
+            None,
             None,
         )
         .await
