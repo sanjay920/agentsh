@@ -136,6 +136,20 @@ pub struct SessionExecParams {
     pub idle_timeout_seconds: Option<u64>,
 }
 
+/// Parameters for the `session_send` tool.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SessionSendParams {
+    /// ID of the session to interact with.
+    pub id: String,
+    /// Text to type into the terminal. Include \n for Enter.
+    /// Omit to just read whatever is currently on screen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    /// Seconds to wait for output to settle before returning. Defaults to 5.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
+}
+
 /// Parameters for the `close_session` tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CloseSessionParams {
@@ -392,7 +406,7 @@ impl AgentshServer {
     // -----------------------------------------------------------------------
 
     #[tool(
-        description = "Create a persistent shell session (long-lived bash process with a real PTY). Working directory, env vars, functions, and aliases persist across commands. Use session_exec to run commands in the session. Sessions provide a real terminal (isatty=true), so tools like claude CLI, docker, ssh, and programs with colored output work correctly. Set working_directory to start in a specific project."
+        description = "Create a persistent shell session (long-lived bash process with a real PTY). Working directory, env vars, functions, and aliases persist across commands. Use session_exec for commands that finish (git, npm, cargo) and session_send for interactive programs (claude CLI, python REPL, ssh). Sessions provide a real terminal (isatty=true). Set working_directory to start in a specific project."
     )]
     async fn create_session(
         &self,
@@ -413,7 +427,10 @@ impl AgentshServer {
                     Content::text(
                         "<system_reminder>\n\
                          Session rules (IMPORTANT):\n\
-                         - Do NOT add 2>&1 to commands. Stderr is already merged with stdout automatically.\n\
+                         - Use session_exec for commands that finish (git, npm, cargo, etc.).\n\
+                         - Use session_send for interactive programs (claude, python, ssh, REPLs). \
+                         session_send types input and returns what appears on screen.\n\
+                         - Do NOT add 2>&1 to commands. Stderr is already merged with stdout.\n\
                          - Do NOT pipe through pagers (less, more). PAGER is already set to cat.\n\
                          - For long-running commands, set timeout_seconds on session_exec.\n\
                          </system_reminder>",
@@ -473,6 +490,29 @@ impl AgentshServer {
         }
     }
 
+    #[tool(
+        description = "Send raw input to a session and return whatever appears on screen. Unlike session_exec, this does NOT wrap commands in markers or extract exit codes -- it interacts with the terminal like a human would. Use for interactive programs (claude CLI, python REPL, ssh), answering prompts, or peeking at a running process. Set input to the text to type (include \\n for Enter). Omit input to just read current output. Returns after output stops changing for timeout_seconds (default 5)."
+    )]
+    async fn session_send(
+        &self,
+        Parameters(params): Parameters<SessionSendParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let timeout = params.timeout_seconds.unwrap_or(5);
+
+        tracing::info!(session = %params.id, "session_send");
+
+        match self
+            .sessions
+            .send(&params.id, params.input.as_deref(), timeout)
+            .await
+        {
+            Ok(lines) => json_content(&serde_json::json!({
+                "output": lines,
+            })),
+            Err(e) => err_result(e),
+        }
+    }
+
     #[tool(description = "List all active shell sessions with their ID and alive status.")]
     async fn list_sessions(&self) -> Result<CallToolResult, McpError> {
         let sessions = self.sessions.list().await;
@@ -509,12 +549,12 @@ impl ServerHandler for AgentshServer {
                 "agentsh is a shell for AI agents with two modes:\n\n\
                  SESSIONS (preferred for most work):\n\
                  Sessions are persistent bash processes with a real PTY (pseudo-terminal). \
-                 Use create_session to start one, then session_exec to run commands. \
+                 Use create_session to start one, then:\n\
+                 - session_exec: for commands that finish (git, npm, cargo). Returns exit code and structured output.\n\
+                 - session_send: for interactive programs (claude CLI, python REPL, ssh). Types input and returns \
+                 what appears on screen, like a human reading a terminal. Use for anything that doesn't exit on its own.\n\
                  Working directory, env vars, shell functions, and aliases persist across commands. \
-                 Programs that require a terminal (claude CLI, interactive tools, colored output) \
-                 work correctly in sessions because isatty()=true. \
-                 For long-running commands, set timeout_seconds appropriately (default 300s, max 3600s). \
-                 If a command might take more than 5 minutes, increase timeout_seconds.\n\n\
+                 Programs that require a terminal work correctly because isatty()=true.\n\n\
                  STATELESS (for quick one-off commands):\n\
                  run_command executes a single command in a fresh shell -- no state persists between calls. \
                  Faster for simple checks (git status, ls, which). No PTY -- programs see pipes. \

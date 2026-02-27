@@ -334,6 +334,54 @@ impl ShellSession {
         })
     }
 
+    /// Send raw input to the PTY and read output until it settles.
+    ///
+    /// Unlike `exec`, this does not wrap commands in markers or extract exit
+    /// codes. It interacts with the terminal the way a human would: type
+    /// something, wait for the screen to stop changing, read what's there.
+    async fn send(&mut self, input: Option<&str>, idle_timeout_secs: u64) -> Vec<String> {
+        use tokio::io::AsyncReadExt;
+
+        if let Some(text) = input {
+            let _ = self.raw_send(text).await;
+        }
+
+        let mut accumulated = Vec::<u8>::new();
+        let mut buf = [0u8; 4096];
+        let idle_timeout = std::time::Duration::from_secs(idle_timeout_secs);
+        let chunk_timeout = std::time::Duration::from_millis(200);
+        let mut last_data = Instant::now();
+        let max_total = std::time::Duration::from_secs(idle_timeout_secs * 60); // hard cap
+        let start = Instant::now();
+
+        loop {
+            match tokio::time::timeout(chunk_timeout, self.reader.read(&mut buf)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => {
+                    accumulated.extend_from_slice(&buf[..n]);
+                    last_data = Instant::now();
+                }
+                Ok(Err(_)) => break,
+                Err(_) => {
+                    // No data this chunk. If we have output and idle exceeded, return.
+                    if !accumulated.is_empty() && last_data.elapsed() >= idle_timeout {
+                        break;
+                    }
+                    // Hard cap to prevent infinite wait.
+                    if start.elapsed() >= max_total {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let raw = String::from_utf8_lossy(&accumulated);
+        raw.lines()
+            .map(|l| clean_line(l))
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
+
     /// Check if the bash process is still alive.
     fn is_alive(&mut self) -> bool {
         match self.child.try_wait() {
@@ -414,6 +462,25 @@ impl SessionManager {
         let mut result = session.exec(command, timeout_seconds, idle_timeout_seconds).await?;
         result.session_id = id.to_string();
         Ok(result)
+    }
+
+    /// Send raw input and read output from a session.
+    pub async fn send(
+        &self,
+        id: &str,
+        input: Option<&str>,
+        idle_timeout_secs: u64,
+    ) -> Result<Vec<String>, String> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| format!("no session with id '{id}'"))?;
+
+        if !session.is_alive() {
+            return Err(format!("session '{id}' is dead (bash process exited)"));
+        }
+
+        Ok(session.send(input, idle_timeout_secs).await)
     }
 
     /// List all sessions.
