@@ -221,6 +221,104 @@ impl AgentshServer {
     }
 }
 
+impl AgentshServer {
+    /// Gather environment context from a freshly created session.
+    ///
+    /// Runs a quick shell snippet to detect the working directory, git status,
+    /// and other context, then formats it as a `<system_reminder>` for the agent.
+    async fn gather_session_context(&self, session_id: &str) -> String {
+        let script = r#"echo "CWD:$(pwd)"
+if git rev-parse --is-inside-work-tree 2>/dev/null | grep -q true; then
+  echo "GIT_BRANCH:$(git branch --show-current 2>/dev/null)"
+  echo "GIT_MAIN:$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo main)"
+  echo "GIT_STATUS_START"
+  git status --short 2>/dev/null | head -20
+  echo "GIT_STATUS_END"
+  echo "GIT_LOG_START"
+  git log --oneline -5 2>/dev/null
+  echo "GIT_LOG_END"
+fi"#;
+
+        let result = self.sessions.exec(session_id, script, Some(10), None).await;
+
+        let mut cwd = String::new();
+        let mut branch = String::new();
+        let mut main_branch = String::from("main");
+        let mut status_lines: Vec<String> = Vec::new();
+        let mut log_lines: Vec<String> = Vec::new();
+        let mut in_status = false;
+        let mut in_log = false;
+        let mut is_git = false;
+
+        if let Ok(result) = result {
+            for line in &result.lines {
+                if let Some(val) = line.strip_prefix("CWD:") {
+                    cwd = val.to_string();
+                } else if let Some(val) = line.strip_prefix("GIT_BRANCH:") {
+                    branch = val.to_string();
+                    is_git = true;
+                } else if let Some(val) = line.strip_prefix("GIT_MAIN:") {
+                    main_branch = val.to_string();
+                } else if line == "GIT_STATUS_START" {
+                    in_status = true;
+                } else if line == "GIT_STATUS_END" {
+                    in_status = false;
+                } else if line == "GIT_LOG_START" {
+                    in_log = true;
+                } else if line == "GIT_LOG_END" {
+                    in_log = false;
+                } else if in_status {
+                    status_lines.push(line.clone());
+                } else if in_log {
+                    log_lines.push(line.clone());
+                }
+            }
+        }
+
+        let mut ctx = String::from("<system_reminder>\n");
+
+        // Session rules.
+        ctx.push_str(
+            "Session rules (IMPORTANT):\n\
+             - Use session_exec for commands that finish (git, npm, cargo, etc.).\n\
+             - Use session_send for interactive programs (claude, python, ssh, REPLs). \
+             session_send types input and returns what appears on screen.\n\
+             - Do NOT add 2>&1 to commands. Stderr is already merged with stdout.\n\
+             - Do NOT pipe through pagers (less, more). PAGER is already set to cat.\n\
+             - For long-running commands, set timeout_seconds on session_exec.\n\n",
+        );
+
+        // Environment context.
+        if !cwd.is_empty() {
+            ctx.push_str(&format!("Working directory: {cwd}\n"));
+        }
+
+        if is_git {
+            ctx.push_str(&format!("Git branch: {branch}\n"));
+            ctx.push_str(&format!("Main branch (for PRs): {main_branch}\n"));
+
+            if !status_lines.is_empty() {
+                ctx.push_str("Git status:\n");
+                for line in &status_lines {
+                    ctx.push_str(&format!("  {line}\n"));
+                }
+            } else {
+                ctx.push_str("Git status: clean\n");
+            }
+
+            if !log_lines.is_empty() {
+                ctx.push_str("Recent commits:\n");
+                for line in &log_lines {
+                    ctx.push_str(&format!("  {line}\n"));
+                }
+            }
+        }
+
+        ctx.push_str("</system_reminder>");
+        ctx
+    }
+}
+
 impl Default for AgentshServer {
     fn default() -> Self {
         Self::new()
@@ -424,19 +522,13 @@ impl AgentshServer {
                 let json = serde_json::to_string_pretty(&info).map_err(|e| {
                     McpError::internal_error(format!("JSON serialization error: {e}"), None)
                 })?;
+
+                // Gather environment context from the session.
+                let context = self.gather_session_context(&info.id).await;
+
                 Ok(CallToolResult::success(vec![
                     Content::text(json),
-                    Content::text(
-                        "<system_reminder>\n\
-                         Session rules (IMPORTANT):\n\
-                         - Use session_exec for commands that finish (git, npm, cargo, etc.).\n\
-                         - Use session_send for interactive programs (claude, python, ssh, REPLs). \
-                         session_send types input and returns what appears on screen.\n\
-                         - Do NOT add 2>&1 to commands. Stderr is already merged with stdout.\n\
-                         - Do NOT pipe through pagers (less, more). PAGER is already set to cat.\n\
-                         - For long-running commands, set timeout_seconds on session_exec.\n\
-                         </system_reminder>",
-                    ),
+                    Content::text(context),
                 ]))
             }
             Err(e) => err_result(e),
