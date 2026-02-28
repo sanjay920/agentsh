@@ -28,12 +28,29 @@ async fn test_create_and_close_session() {
 }
 
 #[tokio::test]
-async fn test_duplicate_session_id_rejected() {
+async fn test_create_replaces_existing_session() {
     let mgr = manager();
     mgr.create("dup".into(), None).await.unwrap();
-    let err = mgr.create("dup".into(), None).await;
-    assert!(err.is_err());
-    assert!(err.unwrap_err().contains("already exists"));
+
+    // Set state in the first session.
+    mgr.exec("dup", "export MARKER=old", None, None)
+        .await
+        .unwrap();
+
+    // Creating again with the same ID replaces it (idempotent).
+    let info = mgr.create("dup".into(), None).await.unwrap();
+    assert_eq!(info.id, "dup");
+    assert!(info.alive);
+
+    // State should be gone (fresh session).
+    let result = mgr.exec("dup", "echo ${MARKER:-empty}", None, None)
+        .await
+        .unwrap();
+    assert!(
+        result.lines.iter().any(|l| l.contains("empty")),
+        "replaced session should have fresh state, got: {:?}",
+        result.lines
+    );
 }
 
 // ---------------------------------------------------------------------------

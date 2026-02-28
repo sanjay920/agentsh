@@ -473,6 +473,10 @@ impl SessionManager {
     }
 
     /// Create a new session with the given ID.
+    ///
+    /// Idempotent: if a session with this ID already exists, it is closed and
+    /// replaced with a fresh one. This doubles as "restart" -- just call
+    /// `create` again with the same ID.
     pub async fn create(
         &self,
         id: String,
@@ -480,8 +484,9 @@ impl SessionManager {
     ) -> Result<SessionInfo, String> {
         let mut sessions = self.sessions.lock().await;
 
-        if sessions.contains_key(&id) {
-            return Err(format!("session '{id}' already exists"));
+        // Replace existing session if present.
+        if let Some(old) = sessions.remove(&id) {
+            Self::shutdown_session(old).await;
         }
 
         if sessions.len() >= MAX_SESSIONS {
@@ -554,17 +559,20 @@ impl SessionManager {
     /// Close a session.
     pub async fn close(&self, id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
-        let mut session = sessions
+        let session = sessions
             .remove(id)
             .ok_or_else(|| format!("no session with id '{id}'"))?;
 
-        // Ask bash to exit gracefully.
+        Self::shutdown_session(session).await;
+        Ok(())
+    }
+
+    /// Gracefully shut down a session: send exit, drop PTY handles, wait.
+    async fn shutdown_session(mut session: ShellSession) {
         let _ = session.raw_send("exit\n").await;
 
         // Destructure to drop PTY handles before waiting -- closing the master
-        // fd sends SIGHUP to bash, which unblocks the wait below. Without this,
-        // child.wait() can hang indefinitely because the PTY keeps the process
-        // alive.
+        // fd sends SIGHUP to bash, which unblocks the wait below.
         let ShellSession {
             mut child,
             writer,
@@ -573,7 +581,6 @@ impl SessionManager {
         drop(writer);
         drop(reader);
 
-        // Wait for graceful exit with a bounded timeout.
         if tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
             .await
             .is_err()
@@ -582,8 +589,6 @@ impl SessionManager {
             let _ =
                 tokio::time::timeout(std::time::Duration::from_secs(1), child.wait()).await;
         }
-
-        Ok(())
     }
 }
 
