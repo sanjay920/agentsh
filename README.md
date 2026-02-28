@@ -94,11 +94,15 @@ Verify with `/mcp` inside Claude Code.
 }
 ```
 
-## Two modes
+## Tools
 
 ### Sessions (persistent, with PTY)
 
 Sessions are persistent bash processes backed by a real pseudo-terminal. Working directory, env vars, shell functions, and aliases persist across commands. Programs that check `isatty()` (claude CLI, docker, ssh, colored output tools) work correctly.
+
+`create_session` is idempotent -- calling it with an existing ID replaces the session with a fresh one (doubles as restart).
+
+**`session_exec`** -- for commands that finish (git, npm, cargo):
 
 ```
 create_session({ "id": "dev", "working_directory": "/my/project" })
@@ -108,6 +112,19 @@ session_exec({ "id": "dev", "command": "export FOO=bar" })
 session_exec({ "id": "dev", "command": "echo $FOO" })       # "bar" -- state persists
 close_session({ "id": "dev" })
 ```
+
+**`session_send`** -- for interactive programs (claude CLI, python REPL, ssh):
+
+```
+create_session({ "id": "dev" })
+session_send({ "id": "dev", "input": "python3\\n", "timeout_seconds": 5 })
+  → ["Python 3.12.0 ...", ">>> "]
+session_send({ "id": "dev", "input": "2 + 2\\n", "timeout_seconds": 5 })
+  → ["2 + 2", "4", ">>> "]
+session_send({ "id": "dev", "input": "\\x04" })  # Ctrl+D to exit
+```
+
+Escape sequences in `session_send` input: `\n` = Enter, `\r` = CR, `\t` = Tab, `\xNN` = hex byte (e.g. `\x03` = Ctrl+C, `\x04` = Ctrl+D, `\x1b` = Escape).
 
 ### Stateless (quick one-off commands)
 
@@ -143,7 +160,7 @@ If the agent needs more, it calls `get_output` with the `id` and a line range.
 ## Development
 
 ```bash
-cargo test           # 83 tests
+cargo test           # 87 tests
 cargo clippy         # lint
 cargo fmt            # format
 ```

@@ -39,10 +39,12 @@ src/
 - **session.rs**: PTY-backed persistent bash sessions. Uses `pty-process` crate for real
   pseudo-terminals (`isatty()=true`). Commands delimited with UUID markers. State (cwd,
   env vars, functions, aliases) persists across commands. ANSI codes stripped from output.
-- **server.rs**: MCP glue. Defines `AgentshServer` struct with 11 tools:
+- **server.rs**: MCP glue. Defines `AgentshServer` struct with 12 tools:
   Stateless: `run_command`, `start_command`, `wait_command`, `get_status`, `kill_command`,
   `list_commands`, `get_output`.
-  Sessions: `create_session`, `session_exec`, `list_sessions`, `close_session`.
+  Sessions: `create_session`, `session_exec`, `session_send`, `list_sessions`, `close_session`.
+  `create_session` is idempotent (replaces existing). `session_send` processes escape
+  sequences (`\n`, `\r`, `\xNN`) for interactive terminal control.
 - **main.rs**: Minimal. Only tracing setup + `server.serve(stdio())`.
 
 ## MCP Tool Conventions

@@ -104,11 +104,15 @@ pub fn extract_errors(lines: &[String]) -> Vec<String> {
 /// Regex matching ANSI escape sequences (CSI sequences, OSC sequences, etc.).
 static ANSI_ESCAPE: LazyLock<Regex> = LazyLock::new(|| {
     // Matches:
-    // - CSI sequences: \x1b[ ... final_byte  (e.g., colors, cursor movement)
+    // - CSI sequences: \x1b[ ... final_byte  (parameters can include 0-9;?<=>!)
+    //   Covers standard ANSI, DEC private modes, and Kitty keyboard protocol
     // - OSC sequences: \x1b] ... ST          (e.g., terminal title)
     // - Simple escapes: \x1b followed by a single character
-    Regex::new(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-B]|\x1b[a-zA-Z]")
-        .expect("invalid ANSI regex")
+    // - Backspace sequences: char \x08 (used by some programs for bold/overstrike)
+    Regex::new(
+        r"\x1b\[[0-9;?<=>!]*[a-zA-Z~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-B]|\x1b[a-zA-Z]|.\x08",
+    )
+    .expect("invalid ANSI regex")
 });
 
 /// Strip ANSI escape codes from a string.

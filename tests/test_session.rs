@@ -43,7 +43,8 @@ async fn test_create_replaces_existing_session() {
     assert!(info.alive);
 
     // State should be gone (fresh session).
-    let result = mgr.exec("dup", "echo ${MARKER:-empty}", None, None)
+    let result = mgr
+        .exec("dup", "echo ${MARKER:-empty}", None, None)
         .await
         .unwrap();
     assert!(
@@ -62,7 +63,10 @@ async fn test_session_exec_echo() {
     let mgr = manager();
     mgr.create("t1".into(), None).await.unwrap();
 
-    let result = mgr.exec("t1", "echo hello session", None, None).await.unwrap();
+    let result = mgr
+        .exec("t1", "echo hello session", None, None)
+        .await
+        .unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(result.lines.iter().any(|l| l.contains("hello session")));
     assert!(!result.timed_out);
@@ -121,7 +125,10 @@ async fn test_session_exec_stderr_captured() {
     let mgr = manager();
     mgr.create("t5".into(), None).await.unwrap();
 
-    let result = mgr.exec("t5", "echo err_msg >&2", None, None).await.unwrap();
+    let result = mgr
+        .exec("t5", "echo err_msg >&2", None, None)
+        .await
+        .unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result.lines.iter().any(|l| l.contains("err_msg")),
@@ -167,7 +174,10 @@ async fn test_session_env_var_persists() {
         .unwrap();
 
     // Read it back in a subsequent command
-    let result = mgr.exec("env", "echo $MY_SESSION_VAR", None, None).await.unwrap();
+    let result = mgr
+        .exec("env", "echo $MY_SESSION_VAR", None, None)
+        .await
+        .unwrap();
     assert_eq!(result.exit_code, 0);
     assert!(
         result.lines.iter().any(|l| l.contains("persistent_value")),
@@ -201,7 +211,9 @@ async fn test_session_alias_persists() {
     let mgr = manager();
     mgr.create("alias".into(), None).await.unwrap();
 
-    mgr.exec("alias", "alias ll='ls -la'", None, None).await.unwrap();
+    mgr.exec("alias", "alias ll='ls -la'", None, None)
+        .await
+        .unwrap();
 
     // Using the alias
     let result = mgr.exec("alias", "ll /tmp", None, None).await.unwrap();
@@ -268,7 +280,10 @@ async fn test_session_timeout() {
     // Note: timeout kills the foreground process. The session may or may not
     // survive depending on how bash handles the signal. We verify the timeout
     // is detected and the result is correct.
-    let result = mgr.exec("timeout", "sleep 30", Some(2), None).await.unwrap();
+    let result = mgr
+        .exec("timeout", "sleep 30", Some(2), None)
+        .await
+        .unwrap();
     assert!(result.timed_out, "command should have timed out");
     assert_eq!(result.exit_code, 124, "exit code should be 124 for timeout");
     assert!(
@@ -308,8 +323,12 @@ async fn test_multiple_independent_sessions() {
     mgr.create("b".into(), None).await.unwrap();
 
     // Set different state in each
-    mgr.exec("a", "export WHICH=session_a", None, None).await.unwrap();
-    mgr.exec("b", "export WHICH=session_b", None, None).await.unwrap();
+    mgr.exec("a", "export WHICH=session_a", None, None)
+        .await
+        .unwrap();
+    mgr.exec("b", "export WHICH=session_b", None, None)
+        .await
+        .unwrap();
 
     // Verify they're independent
     let ra = mgr.exec("a", "echo $WHICH", None, None).await.unwrap();
@@ -371,6 +390,85 @@ async fn test_session_pty_isatty() {
     assert!(
         result.lines.iter().any(|l| l.contains("True True True")),
         "all FDs should report isatty=True with PTY, got: {:?}",
+        result.lines
+    );
+}
+
+// ---------------------------------------------------------------------------
+// session_send -- interactive terminal interaction
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_session_send_basic() {
+    let mgr = manager();
+    mgr.create("send1".into(), None).await.unwrap();
+
+    // Send a command with newline (escape-processed).
+    let output = mgr
+        .send("send1", Some("echo hello_send\\n"), 3)
+        .await
+        .unwrap();
+    assert!(
+        output.iter().any(|l| l.contains("hello_send")),
+        "session_send should capture output, got: {:?}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_session_send_peek_no_input() {
+    let mgr = manager();
+    mgr.create("send2".into(), None).await.unwrap();
+
+    // Run a command first via exec to produce state.
+    mgr.exec("send2", "echo background_data", None, None)
+        .await
+        .unwrap();
+
+    // Peek with no input -- should return empty since there's nothing new.
+    let output = mgr.send("send2", None, 2).await.unwrap();
+    assert!(
+        output.is_empty(),
+        "peek with no input should return empty when idle, got: {:?}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_session_send_escape_sequences() {
+    let mgr = manager();
+    mgr.create("send3".into(), None).await.unwrap();
+
+    // Start python, run a command, exit with Ctrl+D.
+    let output = mgr
+        .send("send3", Some("python3 -c \"print(42)\"\\n"), 3)
+        .await
+        .unwrap();
+    assert!(
+        output.iter().any(|l| l.contains("42")),
+        "should capture python output, got: {:?}",
+        output
+    );
+}
+
+#[tokio::test]
+async fn test_session_send_then_exec() {
+    let mgr = manager();
+    mgr.create("send4".into(), None).await.unwrap();
+
+    // Use send to set an env var.
+    mgr.send("send4", Some("export SEND_VAR=from_send\\n"), 3)
+        .await
+        .unwrap();
+
+    // Verify state persists via exec.
+    let result = mgr
+        .exec("send4", "echo $SEND_VAR", None, None)
+        .await
+        .unwrap();
+    assert!(
+        result.lines.iter().any(|l| l.contains("from_send")),
+        "state from session_send should persist for session_exec, got: {:?}",
         result.lines
     );
 }

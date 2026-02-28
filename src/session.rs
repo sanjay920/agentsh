@@ -145,10 +145,7 @@ impl ShellSession {
     }
 
     /// Read lines from the PTY until the marker is found or EOF.
-    async fn read_until_marker(
-        reader: &mut BufReader<pty_process::OwnedReadPty>,
-        target: &str,
-    ) {
+    async fn read_until_marker(reader: &mut BufReader<pty_process::OwnedReadPty>, target: &str) {
         let mut line = String::new();
         loop {
             line.clear();
@@ -215,8 +212,8 @@ impl ShellSession {
             // After receiving output, use idle timeout if set. This lets us
             // return early for commands that produce output but don't exit
             // (e.g. `claude -p`).
-            let read_timeout = if has_output && idle_timeout_seconds.is_some() {
-                idle_timeout_seconds.unwrap()
+            let read_timeout = if let Some(idle) = idle_timeout_seconds.filter(|_| has_output) {
+                idle
             } else {
                 timeout
             };
@@ -252,8 +249,7 @@ impl ShellSession {
                     // escape sequences that the stripper doesn't fully remove.
                     if let Some(pos) = cleaned.find(&end_marker_prefix) {
                         let after = &cleaned[pos + end_marker_prefix.len()..];
-                        if after.ends_with("__") {
-                            let code_str = &after[..after.len() - 2];
+                        if let Some(code_str) = after.strip_suffix("__") {
                             exit_code = code_str.parse::<i32>().unwrap_or(-1);
                             break;
                         }
@@ -344,10 +340,7 @@ impl ShellSession {
 
         if let Some(text) = input {
             let bytes = process_escapes(text);
-            self.writer
-                .write_all(&bytes)
-                .await
-                .ok();
+            self.writer.write_all(&bytes).await.ok();
             self.writer.flush().await.ok();
         }
 
@@ -382,7 +375,9 @@ impl ShellSession {
             }
 
             // Hard cap: never wait longer than 5x the idle timeout.
-            let max_total = idle_timeout.saturating_mul(5).max(std::time::Duration::from_secs(30));
+            let max_total = idle_timeout
+                .saturating_mul(5)
+                .max(std::time::Duration::from_secs(30));
             if start.elapsed() >= max_total {
                 break;
             }
@@ -390,7 +385,7 @@ impl ShellSession {
 
         let raw = String::from_utf8_lossy(&accumulated);
         raw.lines()
-            .map(|l| clean_line(l))
+            .map(clean_line)
             .filter(|l| !l.is_empty())
             .collect()
     }
@@ -520,7 +515,9 @@ impl SessionManager {
             return Err(format!("session '{id}' is dead (bash process exited)"));
         }
 
-        let mut result = session.exec(command, timeout_seconds, idle_timeout_seconds).await?;
+        let mut result = session
+            .exec(command, timeout_seconds, idle_timeout_seconds)
+            .await?;
         result.session_id = id.to_string();
         Ok(result)
     }
@@ -586,8 +583,7 @@ impl SessionManager {
             .is_err()
         {
             let _ = child.start_kill();
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(1), child.wait()).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), child.wait()).await;
         }
     }
 }

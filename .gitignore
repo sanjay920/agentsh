@@ -29,3 +29,4 @@ RELEASING.md
 # Environment
 .env
 .env.local
+.claude/
