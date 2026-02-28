@@ -355,8 +355,8 @@ impl ShellSession {
         let mut buf = [0u8; 4096];
         let idle_timeout = std::time::Duration::from_secs(idle_timeout_secs);
         let chunk_timeout = std::time::Duration::from_millis(200);
-        let mut last_data = Instant::now();
-        let max_total = std::time::Duration::from_secs(idle_timeout_secs * 60); // hard cap
+        let mut last_meaningful_change = Instant::now();
+        let mut prev_len: usize = 0;
         let start = Instant::now();
 
         loop {
@@ -364,19 +364,27 @@ impl ShellSession {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => {
                     accumulated.extend_from_slice(&buf[..n]);
-                    last_data = Instant::now();
+                    // Track when output meaningfully grew (not just cursor noise).
+                    // TUI apps send tiny updates (1-5 bytes) for cursor/status;
+                    // real output tends to arrive in larger chunks.
+                    if accumulated.len() - prev_len > 10 {
+                        last_meaningful_change = Instant::now();
+                        prev_len = accumulated.len();
+                    }
                 }
                 Ok(Err(_)) => break,
-                Err(_) => {
-                    // No data this chunk. If we have output and idle exceeded, return.
-                    if !accumulated.is_empty() && last_data.elapsed() >= idle_timeout {
-                        break;
-                    }
-                    // Hard cap to prevent infinite wait.
-                    if start.elapsed() >= max_total {
-                        break;
-                    }
-                }
+                Err(_) => {} // no data this chunk, fall through to checks below
+            }
+
+            // Return once output has settled (no meaningful change for idle_timeout).
+            if !accumulated.is_empty() && last_meaningful_change.elapsed() >= idle_timeout {
+                break;
+            }
+
+            // Hard cap: never wait longer than 5x the idle timeout.
+            let max_total = idle_timeout.saturating_mul(5).max(std::time::Duration::from_secs(30));
+            if start.elapsed() >= max_total {
+                break;
             }
         }
 
