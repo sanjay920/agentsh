@@ -141,8 +141,10 @@ pub struct SessionExecParams {
 pub struct SessionSendParams {
     /// ID of the session to interact with.
     pub id: String,
-    /// Text to type into the terminal. Include \n for Enter.
+    /// Text to type into the terminal. Include \\n for Enter.
     /// Omit to just read whatever is currently on screen.
+    /// Escape sequences: \\n = Enter, \\r = CR, \\t = Tab, \\xNN = hex byte
+    /// (e.g. \\x03 = Ctrl+C, \\x04 = Ctrl+D, \\x1b = Escape).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
     /// Seconds to wait for output to settle before returning. Defaults to 5.

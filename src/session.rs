@@ -343,7 +343,12 @@ impl ShellSession {
         use tokio::io::AsyncReadExt;
 
         if let Some(text) = input {
-            let _ = self.raw_send(text).await;
+            let bytes = process_escapes(text);
+            self.writer
+                .write_all(&bytes)
+                .await
+                .ok();
+            self.writer.flush().await.ok();
         }
 
         let mut accumulated = Vec::<u8>::new();
@@ -390,6 +395,49 @@ impl ShellSession {
             Err(_) => false,
         }
     }
+}
+
+/// Process escape sequences in input text so agents can send control characters.
+///
+/// MCP tool parameters arrive as literal strings -- `\n` is two characters
+/// (backslash + n), not a newline byte. This converts common escape sequences
+/// to their byte values so agents can press Enter, send Ctrl+C, etc.
+fn process_escapes(input: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut chars = input.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push(b'\n'),
+                Some('r') => out.push(b'\r'),
+                Some('t') => out.push(b'\t'),
+                Some('\\') => out.push(b'\\'),
+                Some('x') => {
+                    // \xNN -- two hex digits
+                    let mut hex = String::new();
+                    if let Some(h1) = chars.next() {
+                        hex.push(h1);
+                    }
+                    if let Some(h2) = chars.next() {
+                        hex.push(h2);
+                    }
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        out.push(byte);
+                    }
+                }
+                Some(other) => {
+                    out.push(b'\\');
+                    let mut buf = [0u8; 4];
+                    out.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
+                }
+                None => out.push(b'\\'),
+            }
+        } else {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    out
 }
 
 /// Clean a line read from the PTY: strip ANSI escape codes and trailing whitespace.
